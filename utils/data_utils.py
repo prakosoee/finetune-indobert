@@ -507,9 +507,30 @@ class DocumentSentimentDataset(Dataset):
     INDEX2LABEL = {0: 'positive', 1: 'neutral', 2: 'negative'}
     NUM_LABELS = 3
     
-    def load_dataset(self, path): 
-        df = pd.read_csv(path, sep='\t', header=None)
-        df.columns = ['text','sentiment']
+    def load_dataset(self, path):
+        # Auto-detect separator and header
+        if path.endswith('.csv'):
+            sep = ','
+            header = 'infer'
+        else:
+            sep = '\t'
+            header = None
+
+        df = pd.read_csv(path, sep=sep, header=header)
+
+        # Handle header naming flexibility
+        if header is None:
+            df.columns = ['text', 'sentiment']
+        else:
+            # Map common names to 'text' and 'sentiment'
+            col_map = {
+                'sentence': 'text',
+                'label': 'sentiment',
+                'sentiment': 'sentiment',
+                'text': 'text'
+            }
+            df.rename(columns=col_map, inplace=True)
+
         df['sentiment'] = df['sentiment'].apply(lambda lab: self.LABEL2INDEX[lab])
         return df
     
