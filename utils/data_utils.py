@@ -501,53 +501,139 @@ class EntailmentDataLoader(DataLoader):
 #####
 # Document Sentiment Prosa
 #####
+# class DocumentSentimentDataset(Dataset):
+#     # Static constant variable
+#     LABEL2INDEX = {
+#         'negative': 0,
+#         'neutral': 1,
+#         'positive': 2
+#     }
+
+#     INDEX2LABEL = {
+#         0: 'negative',
+#         1: 'neutral',
+#         2: 'positive'
+#     }
+
+#     NUM_LABELS = 3
+    
+#     def load_dataset(self, path):
+#         # Auto-detect separator and header
+#         if path.endswith('.csv'):
+#             sep = ','
+#             header = 'infer'
+#         else:
+#             sep = '\t'
+#             header = None
+
+#         df = pd.read_csv(path, sep=sep, header=header)
+
+#         # Handle header naming flexibility
+#         if header is None:
+#             df.columns = ['text', 'sentiment']
+#         else:
+#             # Map common names to 'text' and 'sentiment'
+#             col_map = {
+#                 'sentence': 'text',
+#                 'label': 'sentiment',
+#                 'sentiment': 'sentiment',
+#                 'text': 'text'
+#             }
+#             df.rename(columns=col_map, inplace=True)
+
+#         df['sentiment'] = df['sentiment'].apply(lambda lab: self.LABEL2INDEX[lab])
+#         return df
+    
+#     def __init__(self, dataset_path, tokenizer, no_special_token=False, *args, **kwargs):
+#         self.data = self.load_dataset(dataset_path)
+#         self.tokenizer = tokenizer
+#         self.no_special_token = no_special_token
+    
+#     def __getitem__(self, index):
+#         data = self.data.loc[index,:]
+#         text, sentiment = data['text'], data['sentiment']
+#         subwords = self.tokenizer.encode(text, add_special_tokens=not self.no_special_token)
+#         return np.array(subwords), np.array(sentiment), data['text']
+    
+#     def __len__(self):
+#         return len(self.data)    
+
+import pandas as pd
+import numpy as np
+from torch.utils.data import Dataset
+
 class DocumentSentimentDataset(Dataset):
-    # Static constant variable
-    LABEL2INDEX = {'positive': 0, 'neutral': 1, 'negative': 2}
-    INDEX2LABEL = {0: 'positive', 1: 'neutral', 2: 'negative'}
+
+    LABEL2INDEX = {
+        'negative': 0,
+        'neutral': 1,
+        'positive': 2
+    }
+
+    INDEX2LABEL = {
+        0: 'negative',
+        1: 'neutral',
+        2: 'positive'
+    }
+
     NUM_LABELS = 3
-    
+
     def load_dataset(self, path):
-        # Auto-detect separator and header
-        if path.endswith('.csv'):
-            sep = ','
-            header = 'infer'
-        else:
-            sep = '\t'
-            header = None
+        # Auto-detect separator
+        sep = ',' if path.endswith('.csv') else '\t'
+        df = pd.read_csv(path, sep=sep)
 
-        df = pd.read_csv(path, sep=sep, header=header)
+        # Normalisasi nama kolom
+        df.rename(columns={
+            'sentence': 'text',
+            'label': 'sentiment',
+            'sentiment': 'sentiment',
+            'text': 'text'
+        }, inplace=True)
 
-        # Handle header naming flexibility
-        if header is None:
-            df.columns = ['text', 'sentiment']
-        else:
-            # Map common names to 'text' and 'sentiment'
-            col_map = {
-                'sentence': 'text',
-                'label': 'sentiment',
-                'sentiment': 'sentiment',
-                'text': 'text'
-            }
-            df.rename(columns=col_map, inplace=True)
+        # Validasi kolom
+        assert 'text' in df.columns, "Kolom text tidak ditemukan"
+        assert 'sentiment' in df.columns, "Kolom sentiment tidak ditemukan"
 
-        df['sentiment'] = df['sentiment'].apply(lambda lab: self.LABEL2INDEX[lab])
-        return df
-    
-    def __init__(self, dataset_path, tokenizer, no_special_token=False, *args, **kwargs):
+        # Handle NaN: Drop rows where 'text' is NaN
+        original_len = len(df)
+        df.dropna(subset=['text'], inplace=True)
+        new_len = len(df)
+        if new_len < original_len:
+            print(f"Dropped {original_len - new_len} rows with NaN text from {path}")
+
+        # Mapping label → index
+        df['sentiment'] = df['sentiment'].map(self.LABEL2INDEX)
+
+        if df['sentiment'].isnull().any():
+            raise ValueError("Ada label tidak valid di dataset")
+
+        return df.reset_index(drop=True)
+
+    def __init__(self, dataset_path, tokenizer, no_special_token=False, lowercase=True):
         self.data = self.load_dataset(dataset_path)
         self.tokenizer = tokenizer
         self.no_special_token = no_special_token
-    
+        self.lowercase = lowercase
+
+        # Simpan labels untuk class-weight
+        self.labels = self.data['sentiment'].tolist()
+
     def __getitem__(self, index):
-        data = self.data.loc[index,:]
-        text, sentiment = data['text'], data['sentiment']
-        subwords = self.tokenizer.encode(text, add_special_tokens=not self.no_special_token)
-        return np.array(subwords), np.array(sentiment), data['text']
-    
+        row = self.data.iloc[index]
+        text = row['text']
+        label = row['sentiment']
+
+        subwords = self.tokenizer.encode(
+            text,
+            add_special_tokens=not self.no_special_token
+        )
+
+        return np.array(subwords, dtype=np.int64), np.array(label, dtype=np.int64), text
+
     def __len__(self):
-        return len(self.data)    
-        
+        return len(self.data)
+
 class DocumentSentimentDataLoader(DataLoader):
     def __init__(self, max_seq_len=512, *args, **kwargs):
         super(DocumentSentimentDataLoader, self).__init__(*args, **kwargs)
